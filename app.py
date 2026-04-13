@@ -38,7 +38,7 @@ def email_app():
     with col1:
         sender_email = st.text_input("Sender Email", value="arun@aprhubtech.com")
     with col2:
-        app_password = st.text_input("App Password", value="szjf2Dp%", type="password")
+        app_password = st.text_input("App Password", value="", type="password")
 
     st.divider()
 
