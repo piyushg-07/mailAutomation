@@ -20,7 +20,8 @@ SMTP_RETRY_ATTEMPTS = 1
 # Keys rotate automatically, using 90% of each limit
 VERIFY_API_KEYS = [
     "6e9b414cc4751fdf32f7e53f35ede703",
-    # "YOUR_API_KEY_2",
+    "b2fbc4e05f47ecf313603dbb753f7d7f",
+    "69462989f24f5be2d604710f1549f623"
 ]
 VERIFY_LIMIT_PER_KEY = 90
 VERIFY_API_URL = "https://client.myemailverifier.com/verifier/validate_single"
