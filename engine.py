@@ -59,6 +59,39 @@ class APIKeyManager:
     def get_remaining(self) -> int:
         return sum(max(0, self.limit - self.usage[k]) for k in self.keys)
 
+def _check_single_credit(key: str) -> dict:
+    """Helper to check one key's balance with 90s timeout."""
+    try:
+        url = f"https://client.myemailverifier.com/verifier/getcredits/{key}"
+        # Setting 90s timeout because Free Tier queries are heavily delayed internally by their proxy
+        resp = requests.get(url, timeout=90)
+        if resp.status_code == 200:
+            data = resp.json()
+            if str(data.get("status", "")).lower() == "true":
+                return {"key": key, "valid": True, "credits": int(data.get("credits", 0))}
+            else:
+                return {"key": key, "valid": False, "error": data.get("Message", "Invalid key response")}
+        else:
+            return {"key": key, "valid": False, "error": f"API Status: {resp.status_code}"}
+    except requests.Timeout:
+        return {"key": key, "valid": False, "error": "Timeout (API took >90s)"}
+    except Exception as e:
+        return {"key": key, "valid": False, "error": f"{type(e).__name__}: {str(e)}"}
+
+def get_all_api_credits(api_keys: list[str]) -> list[dict]:
+    """Fetch live credit balance for all API keys concurrently."""
+    import concurrent.futures
+    valid_keys = list(set([k.strip() for k in api_keys if k and k.strip()]))
+    results = []
+    
+    # We call them simultaneously to bypass stacking 50s + 50s + 50s waits
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(valid_keys) or 1) as executor:
+        future_to_key = {executor.submit(_check_single_credit, key): key for key in valid_keys}
+        for future in concurrent.futures.as_completed(future_to_key):
+            results.append(future.result())
+            
+    return results
+
 
 # ═══════════════════════════════════════════════
 # EMAIL VALIDATION

@@ -12,7 +12,7 @@ from config import SMTP_SERVER, SMTP_PORT, SMTP_USE_TLS, DAILY_SEND_LIMIT, VERIF
 from engine import (
     validate_email_list, load_templates, get_random_template,
     parse_csv, parse_manual_emails, get_sample_csv_bytes,
-    export_report_csv, format_duration
+    export_report_csv, format_duration, get_all_api_credits
 )
 from smtp_sender import SMTPSender
 
@@ -44,6 +44,27 @@ def email_app():
 
     # API keys loaded silently from config.py
     api_keys = [k.strip() for k in VERIFY_API_KEYS if k and k.strip()]
+
+    with st.expander("📊 API Quota & Limits", expanded=False):
+        if not api_keys:
+            st.warning("No API keys found in config.py")
+        else:
+            if st.button("🔄 Check Live Quotas"):
+                with st.spinner("Fetching limits from MyEmailVerifier... (Can take ~60s due to free-tier waiting)"):
+                    st.session_state.quotas = get_all_api_credits(api_keys)
+            
+            if "quotas" in st.session_state:
+                total = 0
+                for row in st.session_state.quotas:
+                    short_key = row["key"][:8] + "..." + row["key"][-4:]
+                    if row["valid"]:
+                        st.write(f"✅ **{short_key}**: {row['credits']} credits left")
+                        total += row["credits"]
+                    else:
+                        st.write(f"❌ **{short_key}**: Error - {row.get('error')}")
+                st.info(f"**Total Available Credits Today**: {total}")
+
+    st.divider()
 
     # ── Session State Init ──
     if "validation_done" not in st.session_state:
