@@ -1,0 +1,12 @@
+Hey {name}!
+
+Quick note from {sender_name} here. I came across {company} and was genuinely impressed by what you're building.
+
+I've got something that might save your team a ton of time and effort. No lengthy pitch — just a quick idea I think you'll find interesting.
+
+Would a 10-minute call work sometime this week? Happy to share some quick wins we've delivered for teams like yours.
+
+Either way, keep up the great work!
+
+Cheers,
+{sender_name}
