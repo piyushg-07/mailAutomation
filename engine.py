@@ -89,11 +89,22 @@ def _verify_via_api(email: str, km: APIKeyManager) -> tuple[str, str | None]:
             return _verify_via_api(email, km)  # try next key
 
         if resp.status_code != 200:
+            # Often out of credits returns 401, 402, 403, etc.
+            if resp.status_code in (401, 402, 403) or "credit" in resp.text.lower() or "limit" in resp.text.lower():
+                km.usage[api_key] = km.limit  # mark exhausted
+                return _verify_via_api(email, km)  # try next key
             return "unknown", f"API status {resp.status_code}"
 
-        km.record_use(api_key)
         data = resp.json()
         status = str(data.get("Status", "")).strip().lower()
+        message = str(data.get("Message", "")).lower() + str(data.get("Error", "")).lower()
+
+        # If API says successful but body has an error about credits
+        if status == "error" and ("credit" in message or "limit" in message or "exhausted" in message):
+            km.usage[api_key] = km.limit  # mark exhausted
+            return _verify_via_api(email, km)  # try next key
+
+        km.record_use(api_key)
 
         if status == "valid":
             return "valid", None
