@@ -51,7 +51,9 @@ def email_app():
         else:
             if st.button("🔄 Check Live Quotas"):
                 with st.spinner("Fetching limits from MyEmailVerifier... (Can take ~60s due to free-tier waiting)"):
-                    st.session_state.quotas = get_all_api_credits(api_keys)
+                    import engine, importlib
+                    importlib.reload(engine)
+                    st.session_state.quotas = engine.get_all_api_credits(api_keys)
             
             if "quotas" in st.session_state:
                 total = 0
