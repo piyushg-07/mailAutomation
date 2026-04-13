@@ -93,10 +93,14 @@ if recipients:
     
     st.subheader("2. Validate Emails")
     if st.button("🔍 Validate Emails", use_container_width=True):
-        label = "Syntax + Domain + Mailbox" if api_keys else "Syntax + Domain"
+        import config, importlib
+        importlib.reload(config)
+        api_keys_live = [k.strip() for k in config.VERIFY_API_KEYS if k and k.strip()]
+        
+        label = "Syntax + Domain + Mailbox" if api_keys_live else "Syntax + Domain"
         with st.spinner(f"Validating ({label})..."):
             valid_results, invalid_results, _ = validate_email_list(
-                [r["email"] for r in recipients], api_keys=api_keys
+                [r["email"] for r in recipients], api_keys=api_keys_live
             )
             
             st.session_state.valid_results = valid_results
@@ -142,11 +146,17 @@ if st.session_state.validation_done:
             for v in catch_all:
                 st.write(f"⚠️ {v['email']}")
 
+    # Import dynamically so it always pulls the latest from config.py even without restart
+    import config
+    api_keys = [k.strip() for k in config.VERIFY_API_KEYS if k and k.strip()]
+
     if uncertain:
         with st.expander(f"❓ Unverified ({len(uncertain)}) — will send", expanded=False):
-            st.caption("Passed syntax + domain. No API key or API couldn't check.")
+            st.caption("Passed syntax + domain but API check failed.")
             for v in uncertain:
-                st.write(f"❓ {v['email']}")
+                # Show the exact reason the API failed!
+                exact_error = v.get("reason") or "No API key provided or network failure"
+                st.write(f"❓ {v['email']} — ({exact_error})")
 
     if invalid_results:
         with st.expander(f"❌ Rejected ({len(invalid_results)}) — skipped", expanded=True):

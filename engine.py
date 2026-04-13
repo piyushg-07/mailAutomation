@@ -149,9 +149,12 @@ def validate_single_email(email: str, km: APIKeyManager | None = None) -> dict:
         if api_status == "invalid":
             result["reason"] = api_reason
             return result
+        elif api_status == "unknown":
+            result["reason"] = api_reason # Save the network/API error so we can see it
 
     else:
         result["api_status"] = "skipped"
+        result["reason"] = "No API keys available in config.py or daily limit reached"
 
     result["valid"] = True
     return result
