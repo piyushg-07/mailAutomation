@@ -39,7 +39,6 @@ def email_app():
         sender_email = st.text_input("Sender Email", value="arun@aprhubtech.com")
     with col2:
         app_password = st.text_input("App Password", value="szjf2Dp%", type="password")
-    sender_name = st.text_input("Your Name (for templates)", value="TruBench")
 
     st.divider()
 
@@ -208,7 +207,7 @@ def email_app():
 
                 def get_body(r):
                     return get_random_template(templates, {
-                        "name": r.get("name", ""), "company": r.get("company", ""), "sender_name": sender_name
+                        "name": r.get("name", ""), "company": r.get("company", "")
                     })
 
                 def on_progress(s):
