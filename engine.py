@@ -8,7 +8,6 @@ Validation Pipeline:
   Layer 4: MyEmailVerifier API (actual mailbox check, multi-key rotation)
 """
 
-import os
 import re
 import io
 import csv
@@ -19,7 +18,7 @@ from datetime import datetime
 from email_validator import validate_email, EmailNotValidError
 from config import (
     DISPOSABLE_DOMAINS, VERIFY_API_KEYS, VERIFY_LIMIT_PER_KEY,
-    VERIFY_API_URL, TEMPLATE_DIR
+    VERIFY_API_URL
 )
 
 
@@ -305,30 +304,43 @@ def parse_manual_emails(text: str) -> list[dict]:
 
 
 # ═══════════════════════════════════════════════
-# TEMPLATE ENGINE
+# TEMPLATE ENGINE (User-Provided)
 # ═══════════════════════════════════════════════
 
-def load_templates() -> list[dict]:
-    """Load all template_*.txt from templates/ directory."""
-    templates = []
-    for idx, fn in enumerate(sorted(f for f in os.listdir(TEMPLATE_DIR)
-                                     if f.endswith(".txt") and f.startswith("template_")), 1):
-        with open(os.path.join(TEMPLATE_DIR, fn), "r", encoding="utf-8") as f:
-            templates.append({"filename": fn, "content": f.read(), "label": f"Template {idx}"})
+def pick_random_template(templates: list[dict], placeholders: dict) -> tuple[str, str, str]:
+    """
+    Pick a random template from user-provided list and render placeholders.
+
+    Args:
+        templates: List of dicts, each with keys "subject" and "body".
+        placeholders: Dict of placeholder values, e.g. {"name": "...", "company": "..."}.
+
+    Returns:
+        (rendered_subject, rendered_body, template_label)
+    """
     if not templates:
-        raise FileNotFoundError(f"No template files in {TEMPLATE_DIR}")
-    return templates
+        raise ValueError("No email templates configured. Add at least one template.")
 
+    idx = random.randint(0, len(templates) - 1)
+    chosen = templates[idx]
+    label = f"Template {idx + 1}"
 
-def get_random_template(templates: list[dict], placeholders: dict) -> tuple[str, str]:
-    """Pick random template and render placeholders."""
-    chosen = random.choice(templates)
-    content = chosen["content"]
     placeholders["date"] = datetime.now().strftime("%B %d, %Y")
+
+    subject = chosen.get("subject", "")
+    body = chosen.get("body", "")
+
     for k, v in placeholders.items():
-        content = content.replace(f"{{{k}}}", str(v) if v else "")
-    content = re.sub(r'\{[a-zA-Z_]+\}', '', content)  # clean unfilled
-    return re.sub(r'  +', ' ', content).strip(), chosen["label"]
+        val = str(v) if v else ""
+        subject = subject.replace(f"{{{k}}}", val)
+        body = body.replace(f"{{{k}}}", val)
+
+    # Clean any unfilled placeholders
+    subject = re.sub(r'\{[a-zA-Z_]+\}', '', subject).strip()
+    body = re.sub(r'\{[a-zA-Z_]+\}', '', body)
+    body = re.sub(r'  +', ' ', body).strip()
+
+    return subject, body, label
 
 
 # ═══════════════════════════════════════════════

@@ -2,7 +2,7 @@
 config.py — Configuration for the Email Automation Engine.
 """
 
-import os
+
 
 # ── SMTP — Zoho Mail ──
 SMTP_SERVER = "smtp.zoho.in"
@@ -26,8 +26,7 @@ VERIFY_API_KEYS = [
 VERIFY_LIMIT_PER_KEY = 90
 VERIFY_API_URL = "https://client.myemailverifier.com/verifier/validate_single"
 
-# ── Paths ──
-TEMPLATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
+
 
 # ── Disposable Domains ──
 DISPOSABLE_DOMAINS = {

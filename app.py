@@ -10,7 +10,7 @@ st.set_page_config(page_title="Automation Hub", page_icon="⚙️", layout="cent
 
 from config import SMTP_SERVER, SMTP_PORT, SMTP_USE_TLS, DAILY_SEND_LIMIT, VERIFY_API_KEYS
 from engine import (
-    validate_email_list, load_templates, get_random_template,
+    validate_email_list, pick_random_template,
     parse_csv, parse_manual_emails, get_sample_csv_bytes,
     export_report_csv, format_duration, get_all_api_credits
 )
@@ -193,9 +193,55 @@ def email_app():
         st.divider()
 
         if send_list:
-            # ── 4. Email Details ──
-            st.subheader("3. Email Details")
-            subject = st.text_input("Subject Line", placeholder="e.g. Quick question about your workflow")
+            # ── 4. Email Templates (User-Provided) ──
+            st.subheader("3. Email Templates")
+            st.caption(
+                "Add one or more email templates below. Each template needs a **Subject** and **Body**. "
+                "If you add multiple, a **random template** is picked for each recipient.\n\n"
+                "**Placeholders** you can use: `{name}`, `{company}`, `{date}`"
+            )
+
+            # ── Session state for templates ──
+            if "email_templates" not in st.session_state:
+                st.session_state.email_templates = [{"subject": "", "body": ""}]
+
+            def add_template():
+                st.session_state.email_templates.append({"subject": "", "body": ""})
+
+            def remove_template(idx):
+                if len(st.session_state.email_templates) > 1:
+                    st.session_state.email_templates.pop(idx)
+
+            # ── Render each template ──
+            for i, tpl in enumerate(st.session_state.email_templates):
+                with st.expander(f"✉️ Template {i + 1}", expanded=(i == 0)):
+                    st.session_state.email_templates[i]["subject"] = st.text_input(
+                        "Subject",
+                        value=tpl["subject"],
+                        placeholder="e.g. Quick question about your workflow",
+                        key=f"tpl_subject_{i}"
+                    )
+                    st.session_state.email_templates[i]["body"] = st.text_area(
+                        "Body",
+                        value=tpl["body"],
+                        height=200,
+                        placeholder=(
+                            "Hi {name},\n\n"
+                            "I wanted to reach out regarding an opportunity for {company}.\n\n"
+                            "Would you be available for a quick call?\n\n"
+                            "Best regards"
+                        ),
+                        key=f"tpl_body_{i}"
+                    )
+                    if len(st.session_state.email_templates) > 1:
+                        st.button("🗑️ Remove", key=f"tpl_del_{i}", on_click=remove_template, args=(i,))
+
+            st.button("➕ Add Another Template", on_click=add_template, use_container_width=True)
+
+            # Show count
+            n_templates = len(st.session_state.email_templates)
+            if n_templates > 1:
+                st.info(f"📬 {n_templates} templates configured — each email will use a random one.")
 
             st.divider()
 
@@ -214,8 +260,12 @@ def email_app():
 
             # ── 6. Send ──
             if st.button("🚀 Send to Valid Emails", use_container_width=True):
-                if not subject:
-                    st.error("Add a subject line.")
+                # Validate templates
+                templates = st.session_state.email_templates
+                valid_templates = [t for t in templates if t["subject"].strip() and t["body"].strip()]
+
+                if not valid_templates:
+                    st.error("Add at least one template with both a subject and body.")
                     st.stop()
 
                 st.markdown("### 📤 Sending")
@@ -223,23 +273,29 @@ def email_app():
 
                 try:
                     smtp = SMTPSender(SMTP_SERVER, SMTP_PORT, SMTP_USE_TLS, sender_email, app_password)
-                    templates = load_templates()
                 except Exception as e:
                     st.error(f"Init failed: {str(e)}")
                     st.stop()
 
-                def get_body(r):
-                    return get_random_template(templates, {
+                def get_body_and_subject(r):
+                    """Returns (body, template_label). Subject is set via closure."""
+                    subj, body, label = pick_random_template(valid_templates, {
                         "name": r.get("name", ""), "company": r.get("company", "")
                     })
+                    # Stash rendered subject for this call so send_batch can use it
+                    get_body_and_subject._last_subject = subj
+                    return body, label
 
                 def on_progress(s):
                     bar.progress(s["current"] / s["total"],
                                  text=f"{s['current']}/{s['total']} · ✅ {s['sent_count']} · ❌ {s['failed_count']}")
 
                 results = smtp.send_batch(
-                    recipients=send_list, subject=subject, get_body_callback=get_body,
-                    delay_range=(min_delay, max_delay), progress_callback=on_progress
+                    recipients=send_list,
+                    subject=None,  # per-email subject now
+                    get_body_callback=get_body_and_subject,
+                    delay_range=(min_delay, max_delay),
+                    progress_callback=on_progress
                 )
 
                 bar.empty()

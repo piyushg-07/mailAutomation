@@ -119,7 +119,7 @@ class SMTPSender:
     def send_batch(
         self,
         recipients: list[dict],
-        subject: str,
+        subject: str | None,
         get_body_callback: callable,
         delay_range: tuple[int, int],
         progress_callback: callable = None,
@@ -131,7 +131,8 @@ class SMTPSender:
         Args:
             recipients: List of dicts with at least {"email": str} and optional
                        {"name": str, "company": str} for template placeholders.
-            subject: Email subject line.
+            subject: Email subject line. If None, subject is taken from
+                     get_body_callback._last_subject after each call (per-email subjects).
             get_body_callback: callable(recipient_dict) -> (body: str, template_label: str)
                               Called for each recipient to get the rendered email body.
             delay_range: (min_seconds, max_seconds) random delay between sends.
@@ -181,7 +182,9 @@ class SMTPSender:
                 continue
 
             # ── Send ──
-            success, error = self._send_single(email, subject, body)
+            # If subject is None, pull the per-email subject from the callback
+            email_subject = subject if subject is not None else getattr(get_body_callback, '_last_subject', 'No Subject')
+            success, error = self._send_single(email, email_subject, body)
 
             if success:
                 sent.append({
