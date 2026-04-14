@@ -114,7 +114,7 @@ def email_app():
             "text/csv",
             help="Download this, fill it with your data, then upload below"
         )
-        uploaded = st.file_uploader("Upload your CSV (columns: email, name, company)", type=["csv"], on_change=reset_validation)
+        uploaded = st.file_uploader("Upload your CSV (columns: email, name, company, category)", type=["csv"], on_change=reset_validation)
         if uploaded:
             res = parse_csv(uploaded.read())
             if res["success"]:
@@ -210,7 +210,7 @@ def email_app():
             st.caption(
                 "Add one or more email templates below. Each template needs a **Subject** and **Body**. "
                 "If you add multiple, a **random template** is picked for each recipient.\n\n"
-                "**Placeholders** you can use: `{name}`, `{company}`, `{date}`"
+                "**Placeholders** you can use in Subject & Body: `{name}`, `{company}`, `{category}`, `{date}`"
             )
 
             # ── Session state for templates ──
@@ -239,7 +239,7 @@ def email_app():
                         height=200,
                         placeholder=(
                             "Hi {name},\n\n"
-                            "I wanted to reach out regarding an opportunity for {company}.\n\n"
+                            "I wanted to reach out regarding an opportunity for {company} in the {category} space.\n\n"
                             "Would you be available for a quick call?\n\n"
                             "Best regards"
                         ),
@@ -292,7 +292,8 @@ def email_app():
                 def get_body_and_subject(r):
                     """Returns (body, template_label). Subject is set via closure."""
                     subj, body, label = pick_random_template(valid_templates, {
-                        "name": r.get("name", ""), "company": r.get("company", "")
+                        "name": r.get("name", ""), "company": r.get("company", ""),
+                        "category": r.get("category", "")
                     })
                     # Stash rendered subject for this call so send_batch can use it
                     get_body_and_subject._last_subject = subj

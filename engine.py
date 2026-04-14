@@ -228,10 +228,10 @@ def validate_email_list(emails: list[str], api_keys: list[str] | None = None,
 
 
 # ═══════════════════════════════════════════════
-# CSV PARSER (expects: email, name, company)
+# CSV PARSER (expects: email, name, company, category)
 # ═══════════════════════════════════════════════
 
-SAMPLE_CSV = "email,name,company\njohn@example.com,John Doe,Acme Corp\njane@example.com,Jane Smith,Widget Inc\n"
+SAMPLE_CSV = "email,name,company,category\njohn@example.com,John Doe,Acme Corp,Technology\njane@example.com,Jane Smith,Widget Inc,Marketing\n"
 
 
 def get_sample_csv_bytes() -> bytes:
@@ -283,6 +283,7 @@ def parse_csv(file_content: bytes | io.BytesIO) -> dict:
             "email": row["email"],
             "name": str(row.get("name", "")).strip() if pd.notna(row.get("name")) and str(row.get("name")) != "nan" else "",
             "company": str(row.get("company", "")).strip() if pd.notna(row.get("company")) and str(row.get("company")) != "nan" else "",
+            "category": str(row.get("category", "")).strip() if pd.notna(row.get("category")) and str(row.get("category")) != "nan" else "",
         })
 
     result["success"] = True
@@ -299,7 +300,7 @@ def parse_manual_emails(text: str) -> list[dict]:
         email = email.strip().lower()
         if email and email not in seen:
             seen.add(email)
-            out.append({"email": email, "name": "", "company": ""})
+            out.append({"email": email, "name": "", "company": "", "category": ""})
     return out
 
 
