@@ -129,82 +129,117 @@ def email_app():
         st.info(f"**{len(recipients)}** recipients ready.")
 
         st.divider()
-        
-        st.subheader("2. Validate Emails")
-        if st.button("🔍 Validate Emails", use_container_width=True):
-            import config, importlib
-            importlib.reload(config)
-            api_keys_live = [k.strip() for k in config.VERIFY_API_KEYS if k and k.strip()]
-            
-            label = "Syntax + Domain + Mailbox" if api_keys_live else "Syntax + Domain"
-            with st.spinner(f"Validating ({label})..."):
-                valid_results, invalid_results, _ = validate_email_list(
-                    [r["email"] for r in recipients], api_keys=api_keys_live
-                )
+
+        # ── Validation Toggle ──
+        enable_validation = st.toggle("🔍 Enable Email Validation", value=True, 
+                                       help="Turn OFF to skip validation and send directly to all recipients.")
+
+        if enable_validation:
+            # ── Validation Flow ──
+            st.subheader("2. Validate Emails")
+            if st.button("🔍 Validate Emails", use_container_width=True):
+                import config, importlib
+                importlib.reload(config)
+                api_keys_live = [k.strip() for k in config.VERIFY_API_KEYS if k and k.strip()]
                 
-                st.session_state.valid_results = valid_results
-                st.session_state.invalid_results = invalid_results
-                
-                # Match recipients with validation results to keep names/companies
-                valid_set = {v["normalized"] for v in valid_results}
-                send_list = [r for r in recipients if r["email"].strip().lower() in valid_set]
-                
-                if len(send_list) > DAILY_SEND_LIMIT:
-                    st.warning(f"Capping at {DAILY_SEND_LIMIT} (Zoho limit).")
-                    send_list = send_list[:DAILY_SEND_LIMIT]
+                label = "Syntax + Domain + Mailbox" if api_keys_live else "Syntax + Domain"
+                with st.spinner(f"Validating ({label})..."):
+                    valid_results, invalid_results, _ = validate_email_list(
+                        [r["email"] for r in recipients], api_keys=api_keys_live
+                    )
                     
-                st.session_state.send_list = send_list
-                st.session_state.validation_done = True
+                    st.session_state.valid_results = valid_results
+                    st.session_state.invalid_results = invalid_results
+                    
+                    # Match recipients with validation results to keep names/companies
+                    valid_set = {v["normalized"] for v in valid_results}
+                    send_list = [r for r in recipients if r["email"].strip().lower() in valid_set]
+                    
+                    if len(send_list) > DAILY_SEND_LIMIT:
+                        st.warning(f"Capping at {DAILY_SEND_LIMIT} (Zoho limit).")
+                        send_list = send_list[:DAILY_SEND_LIMIT]
+                        
+                    st.session_state.send_list = send_list
+                    st.session_state.validation_done = True
 
-    # ── 3. Results & Sending ──
-    if st.session_state.validation_done:
-        valid_results = st.session_state.valid_results
-        invalid_results = st.session_state.invalid_results
-        send_list = st.session_state.send_list
-        
-        # Categorise
-        confirmed = [v for v in valid_results if v.get("api_status") == "valid"]
-        catch_all = [v for v in valid_results if v.get("api_status") == "catch_all"]
-        uncertain = [v for v in valid_results if v.get("api_status") in ("unknown", "skipped", None)]
+            # ── 3. Validation Results & Sending ──
+            if st.session_state.validation_done:
+                valid_results = st.session_state.valid_results
+                invalid_results = st.session_state.invalid_results
+                send_list = st.session_state.send_list
+                
+                # Categorise
+                confirmed = [v for v in valid_results if v.get("api_status") == "valid"]
+                catch_all = [v for v in valid_results if v.get("api_status") == "catch_all"]
+                uncertain = [v for v in valid_results if v.get("api_status") in ("unknown", "skipped", None)]
 
-        st.markdown(
-            f"**Results:** `{len(confirmed)} Confirmed ✅` · "
-            f"`{len(catch_all)} Catch-All ⚠️` · "
-            f"`{len(uncertain)} Unverified ❓` · "
-            f"`{len(invalid_results)} Rejected ❌`"
-        )
+                st.markdown(
+                    f"**Results:** `{len(confirmed)} Confirmed ✅` · "
+                    f"`{len(catch_all)} Catch-All ⚠️` · "
+                    f"`{len(uncertain)} Unverified ❓` · "
+                    f"`{len(invalid_results)} Rejected ❌`"
+                )
 
-        if confirmed:
-            with st.expander(f"✅ Confirmed ({len(confirmed)})", expanded=False):
-                for v in confirmed:
-                    st.write(f"✅ {v['email']}")
+                if confirmed:
+                    with st.expander(f"✅ Confirmed ({len(confirmed)})", expanded=False):
+                        for v in confirmed:
+                            st.write(f"✅ {v['email']}")
 
-        if catch_all:
-            with st.expander(f"⚠️ Catch-all ({len(catch_all)}) — will send", expanded=False):
-                st.caption("Domain accepts everything. Address might not exist.")
-                for v in catch_all:
-                    st.write(f"⚠️ {v['email']}")
+                if catch_all:
+                    with st.expander(f"⚠️ Catch-all ({len(catch_all)}) — will send", expanded=False):
+                        st.caption("Domain accepts everything. Address might not exist.")
+                        for v in catch_all:
+                            st.write(f"⚠️ {v['email']}")
 
-        # Import dynamically so it always pulls the latest from config.py even without restart
-        import config
-        api_keys = [k.strip() for k in config.VERIFY_API_KEYS if k and k.strip()]
+                # Import dynamically so it always pulls the latest from config.py even without restart
+                import config
+                api_keys = [k.strip() for k in config.VERIFY_API_KEYS if k and k.strip()]
 
-        if uncertain:
-            with st.expander(f"❓ Unverified ({len(uncertain)}) — will send", expanded=False):
-                st.caption("Passed syntax + domain but API check failed.")
-                for v in uncertain:
-                    # Show the exact reason the API failed!
-                    exact_error = v.get("reason") or "No API key provided or network failure"
-                    st.write(f"❓ {v['email']} — ({exact_error})")
+                if uncertain:
+                    with st.expander(f"❓ Unverified ({len(uncertain)}) — will send", expanded=False):
+                        st.caption("Passed syntax + domain but API check failed.")
+                        for v in uncertain:
+                            exact_error = v.get("reason") or "No API key provided or network failure"
+                            st.write(f"❓ {v['email']} — ({exact_error})")
 
-        if invalid_results:
-            with st.expander(f"❌ Rejected ({len(invalid_results)}) — skipped", expanded=True):
-                for inv in invalid_results:
-                    st.write(f"❌ {inv['email']} — {inv['reason']}")
+                if invalid_results:
+                    with st.expander(f"❌ Rejected ({len(invalid_results)}) — skipped", expanded=True):
+                        for inv in invalid_results:
+                            st.write(f"❌ {inv['email']} — {inv['reason']}")
 
-        st.divider()
+                st.divider()
+                send_list = st.session_state.send_list
 
-        if send_list:
+        else:
+            # ── Skip Validation — send to all recipients directly ──
+            st.warning("⚠️ Validation is OFF — emails will be sent to **all recipients** without checking.")
+            send_list = recipients
+            if len(send_list) > DAILY_SEND_LIMIT:
+                st.warning(f"Capping at {DAILY_SEND_LIMIT} (Zoho limit).")
+                send_list = send_list[:DAILY_SEND_LIMIT]
+            st.divider()
+
+        # ── Determine what to show next ──
+        if not enable_validation:
+            # Validation OFF → go straight to templates & send
+            send_list = recipients
+            if len(send_list) > DAILY_SEND_LIMIT:
+                st.warning(f"Capping at {DAILY_SEND_LIMIT} (Zoho limit).")
+                send_list = send_list[:DAILY_SEND_LIMIT]
+            show_templates = True
+        elif st.session_state.validation_done:
+            # Validation ON and completed
+            send_list = st.session_state.send_list
+            if send_list:
+                show_templates = True
+            else:
+                st.error("No valid emails to send to.")
+                show_templates = False
+        else:
+            # Validation ON but not yet run — wait for user to click validate
+            show_templates = False
+
+        if show_templates and send_list:
             # ── 4. Email Templates (User-Provided) ──
             st.subheader("3. Email Templates")
             st.caption(
@@ -271,7 +306,8 @@ def email_app():
             st.divider()
 
             # ── 6. Send ──
-            if st.button("🚀 Send to Valid Emails", use_container_width=True):
+            send_label = "🚀 Send Emails" if not enable_validation else "🚀 Send to Valid Emails"
+            if st.button(send_label, use_container_width=True):
                 # Validate templates
                 templates = st.session_state.email_templates
                 valid_templates = [t for t in templates if t["subject"].strip() and t["body"].strip()]
@@ -327,8 +363,6 @@ def email_app():
 
                 st.divider()
                 st.button("🔄 Reset & Start Fresh", on_click=reset_all, use_container_width=True, type="secondary")
-        else:
-            st.error("No valid emails to send to.")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
