@@ -84,6 +84,18 @@ def email_app():
         st.session_state.invalid_results = []
         st.session_state.send_list = []
 
+    def reset_all():
+        """Clear everything — recipients, validation, templates."""
+        st.session_state.validation_done = False
+        st.session_state.valid_results = []
+        st.session_state.invalid_results = []
+        st.session_state.send_list = []
+        st.session_state.email_templates = [{"subject": "", "body": ""}]
+        # Clear any widget keys for templates so they don't persist
+        keys_to_clear = [k for k in st.session_state if k.startswith("tpl_")]
+        for k in keys_to_clear:
+            del st.session_state[k]
+
     # ── 2. Recipients ──
     st.subheader("1. Add Recipients")
     input_method = st.radio("How?", ["Paste Emails", "Upload CSV"], horizontal=True, label_visibility="collapsed", on_change=reset_validation)
@@ -311,6 +323,9 @@ def email_app():
                             st.write(f"❌ {f['email']} — {f['error']}")
 
                 st.download_button("📥 Download Report", export_report_csv(results), "report.csv", "text/csv")
+
+                st.divider()
+                st.button("🔄 Reset & Start Fresh", on_click=reset_all, use_container_width=True, type="secondary")
         else:
             st.error("No valid emails to send to.")
 
@@ -322,6 +337,11 @@ st.sidebar.title("🛠️ Tools Menu")
 app_mode = st.sidebar.radio("Select an Automation:", ["Email Automation", "LinkedIn Automation"])
 
 if app_mode == "Email Automation":
+    st.sidebar.divider()
+    if st.sidebar.button("🔄 Reset Everything", use_container_width=True):
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
+        st.rerun()
     email_app()
 elif app_mode == "LinkedIn Automation":
     import linkedin_automation
