@@ -30,7 +30,7 @@ def email_app():
     """, unsafe_allow_html=True)
 
     st.title("📧 Automatic Email Sender")
-    st.markdown("Send batch emails via Zoho Mail with real email verification.")
+    st.markdown("Send batch emails with real email verification.")
 
     st.divider()
 
