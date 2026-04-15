@@ -195,7 +195,35 @@ def create_driver(headless: bool = False) -> webdriver.Chrome:
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     )
  
-    service = Service(ChromeDriverManager().install())
+    import platform
+    import glob
+    from webdriver_manager.core.os_manager import OperationSystemManager
+
+    # Force win64 to avoid WinError 193 (32-bit chromedriver on 64-bit Windows)
+    if platform.system() == "Windows":
+        os_manager = OperationSystemManager(os_type="win64")
+        manager = ChromeDriverManager(os_system_manager=os_manager)
+    else:
+        manager = ChromeDriverManager()
+
+    driver_path = manager.install()
+
+    # webdriver-manager bug: with Chrome-for-Testing zips it returns the path to
+    # THIRD_PARTY_NOTICES.chromedriver instead of the actual chromedriver.exe.
+    # Walk the directory tree to find the real executable.
+    if not driver_path.endswith(".exe") or not os.path.isfile(driver_path):
+        search_root = os.path.dirname(driver_path)
+        # Go up one level in case we're already inside the sub-folder
+        candidates = glob.glob(os.path.join(search_root, "**", "chromedriver.exe"), recursive=True)
+        if not candidates:
+            candidates = glob.glob(os.path.join(os.path.dirname(search_root), "**", "chromedriver.exe"), recursive=True)
+        if candidates:
+            driver_path = candidates[0]
+            log_info(f"Resolved chromedriver.exe → {driver_path}")
+        else:
+            log_error("Could not locate chromedriver.exe — automation may fail.")
+
+    service = Service(driver_path)
     driver = webdriver.Chrome(service=service, options=options)
  
     # Mask webdriver detection
