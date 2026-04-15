@@ -328,9 +328,22 @@ def login(driver: webdriver.Chrome, email: str, password: str) -> bool:
             log_success("Logged in successfully!")
             return True
         elif "checkpoint" in driver.current_url or "challenge" in driver.current_url:
-            log_warning("LinkedIn requires verification. Please complete it in the browser window.")
-            input("Press ENTER here once you've completed the verification...")
-            return True
+            log_warning("LinkedIn requires verification (checkpoint/challenge detected).")
+            import platform
+            if platform.system() != "Windows":
+                # Running headless on Streamlit Cloud — cannot complete the challenge
+                st.error(
+                    "⚠️ LinkedIn triggered a verification challenge (CAPTCHA / email code). "
+                    "This cannot be completed in headless mode on Streamlit Cloud.\n\n"
+                    "**How to fix:** Log in to LinkedIn manually once on your device to clear "
+                    "the checkpoint, then try again here."
+                )
+                return False
+            else:
+                # Running locally with a visible browser — user can interact
+                log_warning("Please complete the verification in the browser window, then press ENTER in the terminal.")
+                input("Press ENTER here once you've completed the verification...")
+                return True
         else:
             log_error("Login may have failed. Check your credentials.")
             return False
