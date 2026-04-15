@@ -340,16 +340,18 @@ def _handle_challenge(driver) -> str:
         try:
             # Find all iframes — reCAPTCHA lives in one
             iframes = driver.find_elements(By.TAG_NAME, "iframe")
+            captcha_found = False
             for iframe in iframes:
                 src = iframe.get_attribute("src") or ""
-                if "recaptcha" in src or "captcha" in src:
-                    log_info("reCAPTCHA iframe found — switching to it...")
+                if "recaptcha" in src or "captcha" in src or "challenge" in src:
+                    log_info(f"Checking iframe for checkbox (src: {src[:50]})...")
                     driver.switch_to.frame(iframe)
                     try:
                         # Click the "I'm not a robot" checkbox
-                        checkbox = WebDriverWait(driver, 10).until(
+                        checkbox = WebDriverWait(driver, 3).until(
                             EC.presence_of_element_located((By.CSS_SELECTOR, ".recaptcha-checkbox-border, #recaptcha-anchor, .recaptcha-checkbox"))
                         )
+                        log_info("Checkbox found! Attempting to click...")
                         try:
                             # Try ActionChains first (more human-like, avoids some interception)
                             ActionChains(driver).move_to_element(checkbox).pause(0.5).click().perform()
@@ -361,6 +363,7 @@ def _handle_challenge(driver) -> str:
                                 
                         log_info("Clicked reCAPTCHA checkbox.")
                         human_delay(3, 6)
+                        captcha_found = True
 
                         # Check if the checkbox turned green (solved)
                         try:
@@ -378,11 +381,15 @@ def _handle_challenge(driver) -> str:
                                 return "solved"
                         except NoSuchElementException:
                             log_warning("reCAPTCHA checkbox clicked but may need image puzzle.")
+                    except TimeoutException:
+                        log_info("Not the correct iframe (no checkbox). Trying next...")
                     except Exception as e:
-                        log_warning(f"Could not click reCAPTCHA checkbox: {e}")
+                        log_warning(f"Error while interacting with reCAPTCHA iframe: {e}")
                     finally:
                         driver.switch_to.default_content()
-                    break
+                    
+                    if captcha_found:
+                        break # We found the anchor iframe and clicked it, no need to check others
 
             # If we got here, reCAPTCHA wasn't solved
             log_warning("reCAPTCHA detected but could not be auto-solved (image puzzle likely required).")
