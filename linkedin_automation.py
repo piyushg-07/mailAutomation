@@ -55,6 +55,7 @@ CONFIG = {
     # ── LinkedIn Credentials ──────────────────────────────────────────────────
     "email": "ashowry1999@gmail.com",        # Your LinkedIn email
     "password": "HD<'325P'_Q6r:)",       # Your LinkedIn password
+    "li_at_cookie": "",                      # Session cookie (Bypasses CAPTCHA)
 
     # ── Input File ────────────────────────────────────────────────────────────
     "profiles_csv": "LinkedIn - Sheet1.csv",         # CSV with LinkedIn profile URLs
@@ -303,8 +304,30 @@ def scroll_page(driver, amount: int = None):
 #  LINKEDIN ACTIONS
 # ─────────────────────────────────────────────────────────────────────────────
  
-def login(driver: webdriver.Chrome, email: str, password: str) -> bool:
+def login(driver: webdriver.Chrome, email: str, password: str, li_at_cookie: str = "") -> bool:
     """Log into LinkedIn. Returns True on success."""
+    log_info("Navigating to LinkedIn...")
+
+    if li_at_cookie:
+        log_info("Using li_at session cookie to bypass login and CAPTCHAs...")
+        driver.get("https://www.linkedin.com")
+        human_delay(1, 2)
+        driver.add_cookie({
+            "name": "li_at",
+            "value": li_at_cookie,
+            "domain": ".linkedin.com"
+        })
+        driver.refresh()
+        human_delay(3, 5)
+        
+        if "feed" in driver.current_url or "mynetwork" in driver.current_url or driver.find_elements(By.CSS_SELECTOR, ".global-nav"):
+            log_success("Logged in successfully using session cookie!")
+            return True
+        else:
+            log_error("Session cookie login failed. The cookie might be expired.")
+            return False
+
+    # Fallback to standard email/password login
     log_info("Navigating to LinkedIn login page...")
     driver.get("https://www.linkedin.com/login")
     human_delay(2, 4)
@@ -547,10 +570,11 @@ def create_sample_csv(filename: str):
 #  MAIN RUNNER / STREAMLIT UI
 # ─────────────────────────────────────────────────────────────────────────────
  
-def run_automation(email, password, uploaded_file, add_note, note_text, start_row, end_row):
+def run_automation(email, password, li_at_cookie, uploaded_file, add_note, note_text, start_row, end_row):
     # Set config overrides
     CONFIG["email"] = email
     CONFIG["password"] = password
+    CONFIG["li_at_cookie"] = li_at_cookie
     CONFIG["add_note"] = add_note
     if add_note:
         CONFIG["connection_note"] = note_text
@@ -581,7 +605,7 @@ def run_automation(email, password, uploaded_file, add_note, note_text, start_ro
     driver = create_driver(headless=CONFIG["headless"])
  
     try:
-        if not login(driver, CONFIG["email"], CONFIG["password"]):
+        if not login(driver, CONFIG["email"], CONFIG["password"], CONFIG["li_at_cookie"]):
             st.error("Login failed. Check your console and credentials.")
             return
  
@@ -643,6 +667,10 @@ def main():
     with st.form("config_form"):
         email = st.text_input("LinkedIn Email", value=CONFIG["email"])
         password = st.text_input("LinkedIn Password", value="", type="password")
+        st.markdown("---")
+        st.markdown("**(Recommended for Cloud) LinkedIn Session Cookie — Bypasses CAPTCHA entirely.**")
+        st.markdown("*How to get it: Inspect Element -> Application -> Cookies -> Copy `li_at` value.*")
+        li_at_cookie = st.text_input("li_at Cookie", value=CONFIG["li_at_cookie"], type="password")
         
         uploaded_file = st.file_uploader("Upload Profiles CSV (Must contain a 'url' column)", type=['csv'])
         
@@ -658,12 +686,12 @@ def main():
         submitted = st.form_submit_button("Start Automation")
         
     if submitted:
-        if not email or not password:
-            st.error("Please provide both email and password.")
+        if not li_at_cookie and (not email or not password):
+            st.error("Please provide EITHER the li_at Cookie OR both Email and Password.")
         elif not uploaded_file:
             st.error("Please upload a CSV file with target profiles.")
         else:
-            run_automation(email, password, uploaded_file, add_note, note_text, start_row, end_row)
+            run_automation(email, password, li_at_cookie, uploaded_file, add_note, note_text, start_row, end_row)
 
 if __name__ == "__main__":
     import os
