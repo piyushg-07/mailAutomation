@@ -179,54 +179,93 @@ def append_log(log_file: str, profile_url: str, name: str, status: str, note: st
 # ─────────────────────────────────────────────────────────────────────────────
  
 def create_driver(headless: bool = False) -> webdriver.Chrome:
-    """Initialize and return a configured Chrome WebDriver."""
+    """Initialize and return a configured Chrome WebDriver.
+
+    Handles two environments automatically:
+      - Windows (local): uses webdriver-manager to download the correct win64 chromedriver.
+      - Linux (Streamlit Cloud): uses system Chromium installed via packages.txt.
+    """
+    import platform
+    import glob
+    import subprocess
+
     options = Options()
-    if headless:
+
+    system = platform.system()
+
+    if system != "Windows":
+        # ── Streamlit Cloud / Linux ───────────────────────────────────────────
+        # Chromium must be installed via packages.txt (chromium + chromium-driver).
+        # Force headless — there's no display on the cloud host.
         options.add_argument("--headless=new")
- 
-    # Make the browser appear more human-like
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-gpu")
+        options.add_argument("--disable-software-rasterizer")
+
+        # Locate system chromium binary
+        for binary in ("chromium-browser", "chromium"):
+            result = subprocess.run(["which", binary], capture_output=True, text=True)
+            if result.returncode == 0 and result.stdout.strip():
+                options.binary_location = result.stdout.strip()
+                log_info(f"Using system Chromium: {options.binary_location}")
+                break
+
+        # Locate system chromedriver
+        driver_path = None
+        for candidate in ("/usr/bin/chromedriver", "/usr/lib/chromium/chromedriver",
+                          "/usr/lib/chromium-browser/chromedriver"):
+            if os.path.isfile(candidate):
+                driver_path = candidate
+                log_info(f"Using system chromedriver: {driver_path}")
+                break
+
+        if driver_path is None:
+            # Fall back to webdriver-manager on Linux
+            log_warning("System chromedriver not found, falling back to webdriver-manager.")
+            from webdriver_manager.chrome import ChromeDriverManager as CDM
+            driver_path = CDM().install()
+
+        service = Service(driver_path)
+
+    else:
+        # ── Windows (local) ───────────────────────────────────────────────────
+        if headless:
+            options.add_argument("--headless=new")
+
+        from webdriver_manager.core.os_manager import OperationSystemManager
+        os_manager = OperationSystemManager(os_type="win64")
+        manager = ChromeDriverManager(os_system_manager=os_manager)
+        driver_path = manager.install()
+
+        # webdriver-manager bug: Chrome-for-Testing zips return path to
+        # THIRD_PARTY_NOTICES.chromedriver instead of chromedriver.exe — find it.
+        if not driver_path.endswith(".exe") or not os.path.isfile(driver_path):
+            search_root = os.path.dirname(driver_path)
+            candidates = glob.glob(os.path.join(search_root, "**", "chromedriver.exe"), recursive=True)
+            if not candidates:
+                candidates = glob.glob(os.path.join(os.path.dirname(search_root), "**", "chromedriver.exe"), recursive=True)
+            if candidates:
+                driver_path = candidates[0]
+                log_info(f"Resolved chromedriver.exe → {driver_path}")
+            else:
+                log_error("Could not locate chromedriver.exe — automation may fail.")
+
+        service = Service(driver_path)
+
+    # ── Shared options (anti-detection) ──────────────────────────────────────
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option("useAutomationExtension", False)
-    options.add_argument("--start-maximized")
     options.add_argument("--disable-notifications")
     options.add_argument(
         "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     )
- 
-    import platform
-    import glob
-    from webdriver_manager.core.os_manager import OperationSystemManager
+    if system == "Windows":
+        options.add_argument("--start-maximized")
 
-    # Force win64 to avoid WinError 193 (32-bit chromedriver on 64-bit Windows)
-    if platform.system() == "Windows":
-        os_manager = OperationSystemManager(os_type="win64")
-        manager = ChromeDriverManager(os_system_manager=os_manager)
-    else:
-        manager = ChromeDriverManager()
-
-    driver_path = manager.install()
-
-    # webdriver-manager bug: with Chrome-for-Testing zips it returns the path to
-    # THIRD_PARTY_NOTICES.chromedriver instead of the actual chromedriver.exe.
-    # Walk the directory tree to find the real executable.
-    if not driver_path.endswith(".exe") or not os.path.isfile(driver_path):
-        search_root = os.path.dirname(driver_path)
-        # Go up one level in case we're already inside the sub-folder
-        candidates = glob.glob(os.path.join(search_root, "**", "chromedriver.exe"), recursive=True)
-        if not candidates:
-            candidates = glob.glob(os.path.join(os.path.dirname(search_root), "**", "chromedriver.exe"), recursive=True)
-        if candidates:
-            driver_path = candidates[0]
-            log_info(f"Resolved chromedriver.exe → {driver_path}")
-        else:
-            log_error("Could not locate chromedriver.exe — automation may fail.")
-
-    service = Service(driver_path)
     driver = webdriver.Chrome(service=service, options=options)
- 
-    # Mask webdriver detection
     driver.execute_script(
         "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
     )
