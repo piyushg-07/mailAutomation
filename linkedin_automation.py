@@ -55,7 +55,6 @@ CONFIG = {
     # ── LinkedIn Credentials ──────────────────────────────────────────────────
     "email": "ashowry1999@gmail.com",        # Your LinkedIn email
     "password": "HD<'325P'_Q6r:)",       # Your LinkedIn password
-    "captcha_api_key": "",                   # 2Captcha API key (auto-solves CAPTCHAs)
 
     # ── Input File ────────────────────────────────────────────────────────────
     "profiles_csv": "LinkedIn - Sheet1.csv",         # CSV with LinkedIn profile URLs
@@ -321,66 +320,121 @@ def scroll_page(driver, amount: int = None):
 #  LINKEDIN ACTIONS
 # ─────────────────────────────────────────────────────────────────────────────
  
-def _try_solve_captcha(driver, captcha_api_key: str) -> bool:
-    """Attempt to auto-solve a CAPTCHA on the page using the 2Captcha API.
-    Returns True if a CAPTCHA was found and solved, False otherwise."""
-    if not captcha_api_key:
-        log_warning("No 2Captcha API key provided — cannot auto-solve CAPTCHA.")
-        return False
+def _handle_challenge(driver) -> str:
+    """Detect and handle LinkedIn verification challenges.
 
+    Returns:
+        'solved'    — challenge was auto-handled (verify button clicked)
+        'pin_needed' — email PIN verification detected, user must enter PIN
+        'unknown'   — unknown challenge type (screenshot saved for user)
+        'none'      — no challenge detected
+    """
     try:
-        from twocaptcha import TwoCaptcha
-        solver = TwoCaptcha(captcha_api_key)
-    except ImportError:
-        log_error("2captcha-python is not installed. Run: pip install 2captcha-python")
-        return False
+        body_text = driver.find_element(By.TAG_NAME, "body").text.lower()
+    except Exception:
+        return "none"
 
-    # Look for reCAPTCHA on the page
-    try:
-        recaptcha_el = driver.find_element(By.CSS_SELECTOR, ".g-recaptcha, [data-sitekey]")
-        site_key = recaptcha_el.get_attribute("data-sitekey")
-        if not site_key:
-            log_warning("Found reCAPTCHA element but no sitekey.")
-            return False
-
-        log_info("reCAPTCHA detected — sending to 2Captcha for solving...")
-        st.info("🔄 CAPTCHA detected — solving automatically via 2Captcha (this may take 20-60 seconds)...")
-
-        result = solver.recaptcha(sitekey=site_key, url=driver.current_url)
-        token = result["code"]
-
-        # Inject the solution token
-        driver.execute_script(
-            f'document.getElementById("g-recaptcha-response").innerHTML="{token}";'
-        )
-        # Try to submit the form
+    # ── Type 1: Simple "Verify" / "I'm not a robot" button ───────────────
+    verify_xpaths = [
+        "//button[contains(text(),'Verify')]",
+        "//button[contains(text(),'verify')]",
+        "//button[contains(text(),'Submit')]",
+        "//button[contains(text(),'Continue')]",
+        "//button[@id='home_children_button']",
+        "//input[@type='submit']",
+    ]
+    for xpath in verify_xpaths:
         try:
-            submit_btn = driver.find_element(By.CSS_SELECTOR, "button[type='submit'], input[type='submit']")
-            submit_btn.click()
+            btn = driver.find_element(By.XPATH, xpath)
+            if btn.is_displayed():
+                log_info(f"Found verify button — clicking it...")
+                btn.click()
+                human_delay(3, 5)
+                return "solved"
         except NoSuchElementException:
-            # Try callback approach
-            driver.execute_script("___grecaptcha_cfg.clients[0].aa.l.callback(arguments[0]);", token)
+            continue
 
-        human_delay(3, 5)
-        log_success("CAPTCHA solved successfully!")
-        return True
+    # ── Type 2: Email / SMS PIN verification ─────────────────────────
+    pin_keywords = ["enter the code", "verification code", "pin", "we sent", "check your email"]
+    if any(kw in body_text for kw in pin_keywords):
+        # Check if there's a PIN input field
+        pin_selectors = ["input[name='pin']", "input#input__email_verification_pin",
+                         "input[name='verification_code']", "input[type='text']"]
+        for sel in pin_selectors:
+            try:
+                pin_input = driver.find_element(By.CSS_SELECTOR, sel)
+                if pin_input.is_displayed():
+                    log_info("Email/SMS PIN verification detected.")
+                    return "pin_needed"
+            except NoSuchElementException:
+                continue
 
-    except NoSuchElementException:
-        log_info("No reCAPTCHA element found on this page.")
-        return False
+    # ── Type 3: Unknown challenge ─────────────────────────────────
+    if "checkpoint" in driver.current_url or "challenge" in driver.current_url:
+        return "unknown"
+
+    return "none"
+
+
+def _enter_pin(driver, pin: str) -> bool:
+    """Enter a verification PIN code into LinkedIn's challenge page."""
+    pin_selectors = ["input[name='pin']", "input#input__email_verification_pin",
+                     "input[name='verification_code']", "input[type='text']"]
+    for sel in pin_selectors:
+        try:
+            pin_input = driver.find_element(By.CSS_SELECTOR, sel)
+            if pin_input.is_displayed():
+                pin_input.clear()
+                human_type(pin_input, pin)
+                human_delay(0.5, 1)
+
+                # Click submit
+                submit_xpaths = [
+                    "//button[contains(text(),'Submit')]",
+                    "//button[contains(text(),'Verify')]",
+                    "//button[@type='submit']",
+                    "//input[@type='submit']",
+                ]
+                for xpath in submit_xpaths:
+                    try:
+                        btn = driver.find_element(By.XPATH, xpath)
+                        btn.click()
+                        human_delay(3, 5)
+                        return True
+                    except NoSuchElementException:
+                        continue
+
+                # Fallback: press Enter
+                pin_input.send_keys(Keys.RETURN)
+                human_delay(3, 5)
+                return True
+        except NoSuchElementException:
+            continue
+    return False
+
+
+def _save_challenge_screenshot(driver) -> str:
+    """Save a screenshot of the challenge page and return the file path."""
+    screenshot_path = os.path.join(os.path.dirname(__file__), "challenge_screenshot.png")
+    try:
+        driver.save_screenshot(screenshot_path)
+        log_info(f"Challenge screenshot saved to: {screenshot_path}")
+        return screenshot_path
     except Exception as e:
-        log_error(f"CAPTCHA solving failed: {str(e)}")
-        return False
+        log_error(f"Failed to save screenshot: {e}")
+        return ""
 
 
-def login(driver: webdriver.Chrome, email: str, password: str, captcha_api_key: str = "") -> bool:
-    """Log into LinkedIn with auto-CAPTCHA solving.
+def login(driver: webdriver.Chrome, email: str, password: str) -> bool:
+    """Log into LinkedIn with free challenge handling.
 
     Flow:
       1. Navigate to login page (selenium-stealth already masks automation)
       2. Enter credentials and submit
-      3. If a CAPTCHA/checkpoint appears, try to auto-solve with 2Captcha
-      4. If no API key or solving fails, show a clear error
+      3. If challenge detected:
+         a. Auto-click verify buttons (free)
+         b. Email PIN — prompt user in Streamlit UI to enter the code (free)
+         c. Unknown — screenshot + show error
     """
     log_info("Navigating to LinkedIn login page...")
     driver.get("https://www.linkedin.com/login")
@@ -400,7 +454,7 @@ def login(driver: webdriver.Chrome, email: str, password: str, captcha_api_key: 
         pass_field.send_keys(Keys.RETURN)
         human_delay(4, 7)
 
-        # ── Check outcome ────────────────────────────────────────────────────
+        # ── Check outcome ──────────────────────────────────────────────────
         current_url = driver.current_url
 
         if "feed" in current_url or "mynetwork" in current_url:
@@ -410,32 +464,60 @@ def login(driver: webdriver.Chrome, email: str, password: str, captcha_api_key: 
         elif "checkpoint" in current_url or "challenge" in current_url:
             log_warning("LinkedIn verification challenge detected.")
 
-            # Attempt 1: Auto-solve CAPTCHA if API key provided
-            if _try_solve_captcha(driver, captcha_api_key):
-                human_delay(3, 5)
+            challenge_type = _handle_challenge(driver)
+
+            if challenge_type == "solved":
+                # Verify button was clicked — check if we're in
+                human_delay(2, 4)
                 if "feed" in driver.current_url or "mynetwork" in driver.current_url:
-                    log_success("Logged in after CAPTCHA solve!")
+                    log_success("Challenge auto-solved — logged in!")
                     return True
+                # May need PIN after verify click
+                challenge_type = _handle_challenge(driver)
 
-            # Attempt 2: Wait a bit and retry — sometimes the challenge resolves
-            log_info("Waiting for challenge to clear...")
-            human_delay(5, 10)
-            if "feed" in driver.current_url or "mynetwork" in driver.current_url:
-                log_success("Challenge cleared — logged in!")
-                return True
+            if challenge_type == "pin_needed":
+                log_info("PIN verification required — check your email for the code.")
+                st.warning("📧 LinkedIn sent a verification code to your email. Enter it below.")
 
-            # Attempt 3: On Windows, let user solve manually
+                # Use session state to handle the PIN input outside the form
+                if "linkedin_driver" not in st.session_state:
+                    st.session_state["linkedin_driver"] = driver
+                    st.session_state["pin_stage"] = True
+                    st.session_state["login_success"] = False
+
+                pin_code = st.text_input("Enter verification PIN from your email:", key="pin_input")
+                submit_pin = st.button("✅ Submit PIN", key="submit_pin")
+
+                if submit_pin and pin_code:
+                    log_info(f"Entering PIN: {'*' * len(pin_code)}")
+                    if _enter_pin(driver, pin_code.strip()):
+                        human_delay(3, 5)
+                        if "feed" in driver.current_url or "mynetwork" in driver.current_url:
+                            log_success("PIN verified — logged in!")
+                            st.success("✅ PIN verified! Login successful.")
+                            return True
+                        else:
+                            st.error("PIN was entered but login still failed. The PIN may be incorrect.")
+                            return False
+                    else:
+                        st.error("Could not find the PIN input field on the page.")
+                        return False
+
+                # Stop execution here and wait for user to enter PIN
+                st.stop()
+
+            # Unknown challenge — take screenshot and show user
             import platform
             if platform.system() == "Windows":
                 log_warning("Please complete the verification in the browser window.")
                 input("Press ENTER here once you've completed the verification...")
                 return True
             else:
-                st.error(
-                    "⚠️ LinkedIn triggered a verification challenge.\n\n"
-                    "**To fix:** Provide a 2Captcha API key in the form, or "
-                    "log in to LinkedIn manually on your device first to clear the checkpoint."
-                )
+                screenshot_path = _save_challenge_screenshot(driver)
+                st.error("⚠️ LinkedIn triggered a verification challenge that couldn't be auto-solved.")
+                if screenshot_path and os.path.exists(screenshot_path):
+                    st.image(screenshot_path, caption="Challenge screenshot — this is what LinkedIn is showing")
+                st.info("**Tip:** Log in to LinkedIn from your phone/laptop first to clear the challenge, then try again.")
                 return False
         else:
             log_error("Login may have failed. Check your credentials.")
@@ -640,11 +722,10 @@ def create_sample_csv(filename: str):
 #  MAIN RUNNER / STREAMLIT UI
 # ─────────────────────────────────────────────────────────────────────────────
  
-def run_automation(email, password, captcha_api_key, uploaded_file, add_note, note_text, start_row, end_row):
+def run_automation(email, password, uploaded_file, add_note, note_text, start_row, end_row):
     # Set config overrides
     CONFIG["email"] = email
     CONFIG["password"] = password
-    CONFIG["captcha_api_key"] = captcha_api_key
     CONFIG["add_note"] = add_note
     if add_note:
         CONFIG["connection_note"] = note_text
@@ -675,7 +756,7 @@ def run_automation(email, password, captcha_api_key, uploaded_file, add_note, no
     driver = create_driver(headless=CONFIG["headless"])
  
     try:
-        if not login(driver, CONFIG["email"], CONFIG["password"], CONFIG["captcha_api_key"]):
+        if not login(driver, CONFIG["email"], CONFIG["password"]):
             st.error("Login failed. Check your console and credentials.")
             return
  
@@ -737,10 +818,6 @@ def main():
     with st.form("config_form"):
         email = st.text_input("LinkedIn Email", value=CONFIG["email"])
         password = st.text_input("LinkedIn Password", value="", type="password")
-        st.markdown("---")
-        st.markdown("**Auto CAPTCHA Solving** *(optional — needed only if LinkedIn triggers a challenge)*")
-        st.markdown("*Get an API key from [2captcha.com](https://2captcha.com). Costs ~$3/1000 solves.*")
-        captcha_api_key = st.text_input("2Captcha API Key", value=CONFIG["captcha_api_key"], type="password")
         
         uploaded_file = st.file_uploader("Upload Profiles CSV (Must contain a 'url' column)", type=['csv'])
         
@@ -761,7 +838,7 @@ def main():
         elif not uploaded_file:
             st.error("Please upload a CSV file with target profiles.")
         else:
-            run_automation(email, password, captcha_api_key, uploaded_file, add_note, note_text, start_row, end_row)
+            run_automation(email, password, uploaded_file, add_note, note_text, start_row, end_row)
 
 if __name__ == "__main__":
     import os
