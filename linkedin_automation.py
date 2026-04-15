@@ -429,21 +429,61 @@ def login(driver: webdriver.Chrome, email: str, password: str) -> bool:
     """Log into LinkedIn with free challenge handling.
 
     Flow:
-      1. Navigate to login page (selenium-stealth already masks automation)
-      2. Enter credentials and submit
-      3. If challenge detected:
+      1. Warm up browser session by visiting linkedin.com first
+      2. Navigate to login page (selenium-stealth already masks automation)
+      3. Enter credentials and submit
+      4. If challenge detected:
          a. Auto-click verify buttons (free)
          b. Email PIN — prompt user in Streamlit UI to enter the code (free)
          c. Unknown — screenshot + show error
     """
+    # ── Warm up session (helps avoid instant blocks) ──────────────────────
+    log_info("Warming up browser session...")
+    driver.get("https://www.linkedin.com")
+    human_delay(3, 5)
+
     log_info("Navigating to LinkedIn login page...")
     driver.get("https://www.linkedin.com/login")
-    human_delay(2, 4)
+    human_delay(3, 5)
 
     try:
-        email_field = WebDriverWait(driver, 15).until(
-            EC.presence_of_element_located((By.ID, "username"))
-        )
+        # Try multiple possible login form selectors
+        email_field = None
+        selectors = [
+            (By.ID, "username"),
+            (By.CSS_SELECTOR, "input[name='session_key']"),
+            (By.CSS_SELECTOR, "input[type='email']"),
+            (By.CSS_SELECTOR, "input[autocomplete='username']"),
+        ]
+
+        for by, selector in selectors:
+            try:
+                email_field = WebDriverWait(driver, 8).until(
+                    EC.presence_of_element_located((by, selector))
+                )
+                log_info(f"Login form found via: {selector}")
+                break
+            except TimeoutException:
+                continue
+
+        if email_field is None:
+            # Page loaded but no login form — take screenshot for diagnostics
+            log_error("Could not find login form on the page.")
+            screenshot_path = _save_challenge_screenshot(driver)
+            page_title = driver.title
+            current_url = driver.current_url
+            log_error(f"Page title: {page_title}")
+            log_error(f"Current URL: {current_url}")
+
+            st.error(f"⚠️ LinkedIn login page did not load properly.\n\n"
+                     f"**Page title:** {page_title}\n\n"
+                     f"**URL:** {current_url}")
+            if screenshot_path and os.path.exists(screenshot_path):
+                st.image(screenshot_path, caption="What the browser is showing")
+            st.info("**Tip:** This usually means LinkedIn is blocking this server's IP. "
+                    "Try running the automation locally on your computer instead.")
+            return False
+
         human_type(email_field, email)
         human_delay(0.5, 1.5)
 
@@ -520,11 +560,20 @@ def login(driver: webdriver.Chrome, email: str, password: str) -> bool:
                 st.info("**Tip:** Log in to LinkedIn from your phone/laptop first to clear the challenge, then try again.")
                 return False
         else:
+            # Unknown page — screenshot for diagnostics
             log_error("Login may have failed. Check your credentials.")
+            screenshot_path = _save_challenge_screenshot(driver)
+            if screenshot_path and os.path.exists(screenshot_path):
+                st.image(screenshot_path, caption="Post-login page — this is what LinkedIn redirected to")
             return False
 
     except TimeoutException:
         log_error("Timed out waiting for the login page to load.")
+        screenshot_path = _save_challenge_screenshot(driver)
+        st.error("⚠️ LinkedIn login page timed out.")
+        if screenshot_path and os.path.exists(screenshot_path):
+            st.image(screenshot_path, caption="Timeout screenshot — this is what the browser was showing")
+        st.info("**Possible causes:** LinkedIn may be blocking this server's IP, or the page didn't load due to network issues.")
         return False
  
  
