@@ -334,7 +334,63 @@ def _handle_challenge(driver) -> str:
     except Exception:
         return "none"
 
-    # ── Type 1: Simple "Verify" / "I'm not a robot" button ───────────────
+    # ── Type 0: reCAPTCHA "I'm not a robot" checkbox (inside iframe) ─────
+    if "security check" in body_text or "captcha" in body_text or "robot" in body_text:
+        try:
+            # Find all iframes — reCAPTCHA lives in one
+            iframes = driver.find_elements(By.TAG_NAME, "iframe")
+            for iframe in iframes:
+                src = iframe.get_attribute("src") or ""
+                if "recaptcha" in src or "captcha" in src:
+                    log_info("reCAPTCHA iframe found — switching to it...")
+                    driver.switch_to.frame(iframe)
+                    try:
+                        # Click the "I'm not a robot" checkbox
+                        checkbox = WebDriverWait(driver, 5).until(
+                            EC.element_to_be_clickable((By.CSS_SELECTOR, ".recaptcha-checkbox-border, #recaptcha-anchor"))
+                        )
+                        checkbox.click()
+                        log_info("Clicked reCAPTCHA checkbox.")
+                        human_delay(3, 6)
+
+                        # Check if the checkbox turned green (solved)
+                        try:
+                            checked = driver.find_element(By.CSS_SELECTOR, ".recaptcha-checkbox-checked, [aria-checked='true']")
+                            if checked:
+                                log_success("reCAPTCHA checkbox passed!")
+                                driver.switch_to.default_content()
+                                # Click any submit/verify button on the main page
+                                try:
+                                    submit = driver.find_element(By.XPATH, "//button[@type='submit'] | //input[@type='submit']")
+                                    submit.click()
+                                    human_delay(3, 5)
+                                except NoSuchElementException:
+                                    pass
+                                return "solved"
+                        except NoSuchElementException:
+                            log_warning("reCAPTCHA checkbox clicked but may need image puzzle.")
+                    except Exception as e:
+                        log_warning(f"Could not click reCAPTCHA checkbox: {e}")
+                    finally:
+                        driver.switch_to.default_content()
+                    break
+
+            # If we got here, reCAPTCHA wasn't solved
+            log_warning("reCAPTCHA detected but could not be auto-solved (image puzzle likely required).")
+            st.warning(
+                "🔒 **reCAPTCHA detected** — LinkedIn is showing 'Let's do a quick security check'.\n\n"
+                "This happens because Streamlit Cloud uses a **data center IP** which LinkedIn flags as suspicious. "
+                "No free tool can solve image/puzzle CAPTCHAs automatically.\n\n"
+                "**Solutions:**\n"
+                "1. **Run locally** on your computer (works perfectly — no CAPTCHA)\n"
+                "2. **Use a residential proxy** to mask the cloud IP\n"
+            )
+            return "unknown"
+        except Exception as e:
+            log_error(f"reCAPTCHA handling error: {e}")
+            driver.switch_to.default_content()
+
+    # ── Type 1: Simple "Verify" / "Submit" / "Continue" button ───────────
     verify_xpaths = [
         "//button[contains(text(),'Verify')]",
         "//button[contains(text(),'verify')]",
@@ -357,7 +413,6 @@ def _handle_challenge(driver) -> str:
     # ── Type 2: Email / SMS PIN verification ─────────────────────────
     pin_keywords = ["enter the code", "verification code", "pin", "we sent", "check your email"]
     if any(kw in body_text for kw in pin_keywords):
-        # Check if there's a PIN input field
         pin_selectors = ["input[name='pin']", "input#input__email_verification_pin",
                          "input[name='verification_code']", "input[type='text']"]
         for sel in pin_selectors:
