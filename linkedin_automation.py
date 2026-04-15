@@ -46,6 +46,7 @@ from selenium.common.exceptions import (
 )
 from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.action_chains import ActionChains
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  CONFIGURATION — Edit this section before running
@@ -346,10 +347,18 @@ def _handle_challenge(driver) -> str:
                     driver.switch_to.frame(iframe)
                     try:
                         # Click the "I'm not a robot" checkbox
-                        checkbox = WebDriverWait(driver, 5).until(
-                            EC.element_to_be_clickable((By.CSS_SELECTOR, ".recaptcha-checkbox-border, #recaptcha-anchor"))
+                        checkbox = WebDriverWait(driver, 10).until(
+                            EC.presence_of_element_located((By.CSS_SELECTOR, ".recaptcha-checkbox-border, #recaptcha-anchor, .recaptcha-checkbox"))
                         )
-                        checkbox.click()
+                        try:
+                            # Try ActionChains first (more human-like, avoids some interception)
+                            ActionChains(driver).move_to_element(checkbox).pause(0.5).click().perform()
+                        except Exception:
+                            try:
+                                checkbox.click()
+                            except Exception:
+                                driver.execute_script("arguments[0].click();", checkbox)
+                                
                         log_info("Clicked reCAPTCHA checkbox.")
                         human_delay(3, 6)
 
@@ -362,7 +371,7 @@ def _handle_challenge(driver) -> str:
                                 # Click any submit/verify button on the main page
                                 try:
                                     submit = driver.find_element(By.XPATH, "//button[@type='submit'] | //input[@type='submit']")
-                                    submit.click()
+                                    driver.execute_script("arguments[0].click();", submit)
                                     human_delay(3, 5)
                                 except NoSuchElementException:
                                     pass
@@ -404,7 +413,10 @@ def _handle_challenge(driver) -> str:
             btn = driver.find_element(By.XPATH, xpath)
             if btn.is_displayed():
                 log_info(f"Found verify button — clicking it...")
-                btn.click()
+                try:
+                    btn.click()
+                except Exception:
+                    driver.execute_script("arguments[0].click();", btn)
                 human_delay(3, 5)
                 return "solved"
         except NoSuchElementException:
@@ -453,7 +465,10 @@ def _enter_pin(driver, pin: str) -> bool:
                 for xpath in submit_xpaths:
                     try:
                         btn = driver.find_element(By.XPATH, xpath)
-                        btn.click()
+                        try:
+                            btn.click()
+                        except Exception:
+                            driver.execute_script("arguments[0].click();", btn)
                         human_delay(3, 5)
                         return True
                     except NoSuchElementException:
@@ -734,7 +749,10 @@ def send_connection_request(
                     "|//span[normalize-space()='Add a note']"
                 ))
             )
-            add_note_btn.click()
+            try:
+                add_note_btn.click()
+            except Exception:
+                driver.execute_script("arguments[0].click();", add_note_btn)
             human_delay(1, 2)
  
             note_box = WebDriverWait(driver, 6).until(
@@ -752,7 +770,10 @@ def send_connection_request(
                     "|//span[normalize-space()='Send']"
                 ))
             )
-            send_btn.click()
+            try:
+                send_btn.click()
+            except Exception:
+                driver.execute_script("arguments[0].click();", send_btn)
             human_delay(2, 4)
  
             log_success(f"  ✓ Request sent to {first_name} (with note).")
@@ -774,7 +795,10 @@ def send_connection_request(
                     "|//span[normalize-space()='Send without a note']"
                 ))
             )
-            send_without_note_btn.click()
+            try:
+                send_without_note_btn.click()
+            except Exception:
+                driver.execute_script("arguments[0].click();", send_without_note_btn)
             human_delay(2, 4)
  
             log_success(f"  ✓ Request sent to {first_name} (without note).")
