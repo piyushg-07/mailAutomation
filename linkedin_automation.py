@@ -55,7 +55,7 @@ CONFIG = {
     # ── LinkedIn Credentials ──────────────────────────────────────────────────
     "email": "ashowry1999@gmail.com",        # Your LinkedIn email
     "password": "HD<'325P'_Q6r:)",       # Your LinkedIn password
-    "li_at_cookie": "",                      # Session cookie (Bypasses CAPTCHA)
+    "captcha_api_key": "",                   # 2Captcha API key (auto-solves CAPTCHAs)
 
     # ── Input File ────────────────────────────────────────────────────────────
     "profiles_csv": "LinkedIn - Sheet1.csv",         # CSV with LinkedIn profile URLs
@@ -182,13 +182,16 @@ def append_log(log_file: str, profile_url: str, name: str, status: str, note: st
 def create_driver(headless: bool = False) -> webdriver.Chrome:
     """Initialize and return a configured Chrome WebDriver.
 
+    Uses selenium-stealth to mask automation fingerprints and prevent
+    LinkedIn from detecting the browser as a bot (root cause of CAPTCHAs).
+
     Handles two environments automatically:
       - Windows (local): uses webdriver-manager to download the correct win64 chromedriver.
       - Linux (Streamlit Cloud): uses system Chromium installed via packages.txt.
     """
     import platform
     import glob
-    import subprocess
+    import subprocess as sp
 
     options = Options()
 
@@ -196,8 +199,6 @@ def create_driver(headless: bool = False) -> webdriver.Chrome:
 
     if system != "Windows":
         # ── Streamlit Cloud / Linux ───────────────────────────────────────────
-        # Chromium must be installed via packages.txt (chromium + chromium-driver).
-        # Force headless — there's no display on the cloud host.
         options.add_argument("--headless=new")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
@@ -206,7 +207,7 @@ def create_driver(headless: bool = False) -> webdriver.Chrome:
 
         # Locate system chromium binary
         for binary in ("chromium-browser", "chromium"):
-            result = subprocess.run(["which", binary], capture_output=True, text=True)
+            result = sp.run(["which", binary], capture_output=True, text=True)
             if result.returncode == 0 and result.stdout.strip():
                 options.binary_location = result.stdout.strip()
                 log_info(f"Using system Chromium: {options.binary_location}")
@@ -222,7 +223,6 @@ def create_driver(headless: bool = False) -> webdriver.Chrome:
                 break
 
         if driver_path is None:
-            # Fall back to webdriver-manager on Linux
             log_warning("System chromedriver not found, falling back to webdriver-manager.")
             from webdriver_manager.chrome import ChromeDriverManager as CDM
             driver_path = CDM().install()
@@ -239,8 +239,7 @@ def create_driver(headless: bool = False) -> webdriver.Chrome:
         manager = ChromeDriverManager(os_system_manager=os_manager)
         driver_path = manager.install()
 
-        # webdriver-manager bug: Chrome-for-Testing zips return path to
-        # THIRD_PARTY_NOTICES.chromedriver instead of chromedriver.exe — find it.
+        # webdriver-manager bug: returns path to THIRD_PARTY_NOTICES instead of exe
         if not driver_path.endswith(".exe") or not os.path.isfile(driver_path):
             search_root = os.path.dirname(driver_path)
             candidates = glob.glob(os.path.join(search_root, "**", "chromedriver.exe"), recursive=True)
@@ -254,22 +253,40 @@ def create_driver(headless: bool = False) -> webdriver.Chrome:
 
         service = Service(driver_path)
 
-    # ── Shared options (anti-detection) ──────────────────────────────────────
+    # ── Anti-detection options ───────────────────────────────────────────────
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option("useAutomationExtension", False)
     options.add_argument("--disable-notifications")
-    options.add_argument(
-        "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    )
+    options.add_argument("--disable-popup-blocking")
+    options.add_argument("--disable-infobars")
+    options.add_argument("--lang=en-US")
+    options.add_argument("--window-size=1920,1080")
+
     if system == "Windows":
         options.add_argument("--start-maximized")
 
     driver = webdriver.Chrome(service=service, options=options)
-    driver.execute_script(
-        "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
-    )
+
+    # ── Apply selenium-stealth (masks ALL automation fingerprints) ────────
+    try:
+        from selenium_stealth import stealth
+        stealth(
+            driver,
+            languages=["en-US", "en"],
+            vendor="Google Inc.",
+            platform="Win32",
+            webgl_vendor="Intel Inc.",
+            renderer="Intel Iris OpenGL Engine",
+            fix_hairline=True,
+        )
+        log_info("selenium-stealth applied — browser fingerprint masked.")
+    except ImportError:
+        log_warning("selenium-stealth not installed. Falling back to basic anti-detection.")
+        driver.execute_script(
+            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+        )
+
     return driver
  
  
@@ -304,73 +321,126 @@ def scroll_page(driver, amount: int = None):
 #  LINKEDIN ACTIONS
 # ─────────────────────────────────────────────────────────────────────────────
  
-def login(driver: webdriver.Chrome, email: str, password: str, li_at_cookie: str = "") -> bool:
-    """Log into LinkedIn. Returns True on success."""
-    log_info("Navigating to LinkedIn...")
+def _try_solve_captcha(driver, captcha_api_key: str) -> bool:
+    """Attempt to auto-solve a CAPTCHA on the page using the 2Captcha API.
+    Returns True if a CAPTCHA was found and solved, False otherwise."""
+    if not captcha_api_key:
+        log_warning("No 2Captcha API key provided — cannot auto-solve CAPTCHA.")
+        return False
 
-    if li_at_cookie:
-        log_info("Using li_at session cookie to bypass login and CAPTCHAs...")
-        driver.get("https://www.linkedin.com")
-        human_delay(1, 2)
-        driver.add_cookie({
-            "name": "li_at",
-            "value": li_at_cookie,
-            "domain": ".linkedin.com"
-        })
-        driver.refresh()
-        human_delay(3, 5)
-        
-        if "feed" in driver.current_url or "mynetwork" in driver.current_url or driver.find_elements(By.CSS_SELECTOR, ".global-nav"):
-            log_success("Logged in successfully using session cookie!")
-            return True
-        else:
-            log_error("Session cookie login failed. The cookie might be expired.")
+    try:
+        from twocaptcha import TwoCaptcha
+        solver = TwoCaptcha(captcha_api_key)
+    except ImportError:
+        log_error("2captcha-python is not installed. Run: pip install 2captcha-python")
+        return False
+
+    # Look for reCAPTCHA on the page
+    try:
+        recaptcha_el = driver.find_element(By.CSS_SELECTOR, ".g-recaptcha, [data-sitekey]")
+        site_key = recaptcha_el.get_attribute("data-sitekey")
+        if not site_key:
+            log_warning("Found reCAPTCHA element but no sitekey.")
             return False
 
-    # Fallback to standard email/password login
+        log_info("reCAPTCHA detected — sending to 2Captcha for solving...")
+        st.info("🔄 CAPTCHA detected — solving automatically via 2Captcha (this may take 20-60 seconds)...")
+
+        result = solver.recaptcha(sitekey=site_key, url=driver.current_url)
+        token = result["code"]
+
+        # Inject the solution token
+        driver.execute_script(
+            f'document.getElementById("g-recaptcha-response").innerHTML="{token}";'
+        )
+        # Try to submit the form
+        try:
+            submit_btn = driver.find_element(By.CSS_SELECTOR, "button[type='submit'], input[type='submit']")
+            submit_btn.click()
+        except NoSuchElementException:
+            # Try callback approach
+            driver.execute_script("___grecaptcha_cfg.clients[0].aa.l.callback(arguments[0]);", token)
+
+        human_delay(3, 5)
+        log_success("CAPTCHA solved successfully!")
+        return True
+
+    except NoSuchElementException:
+        log_info("No reCAPTCHA element found on this page.")
+        return False
+    except Exception as e:
+        log_error(f"CAPTCHA solving failed: {str(e)}")
+        return False
+
+
+def login(driver: webdriver.Chrome, email: str, password: str, captcha_api_key: str = "") -> bool:
+    """Log into LinkedIn with auto-CAPTCHA solving.
+
+    Flow:
+      1. Navigate to login page (selenium-stealth already masks automation)
+      2. Enter credentials and submit
+      3. If a CAPTCHA/checkpoint appears, try to auto-solve with 2Captcha
+      4. If no API key or solving fails, show a clear error
+    """
     log_info("Navigating to LinkedIn login page...")
     driver.get("https://www.linkedin.com/login")
     human_delay(2, 4)
- 
+
     try:
-        email_field = WebDriverWait(driver, 10).until(
+        email_field = WebDriverWait(driver, 15).until(
             EC.presence_of_element_located((By.ID, "username"))
         )
         human_type(email_field, email)
         human_delay(0.5, 1.5)
- 
+
         pass_field = driver.find_element(By.ID, "password")
         human_type(pass_field, password)
         human_delay(0.5, 1.5)
- 
+
         pass_field.send_keys(Keys.RETURN)
-        human_delay(3, 6)
- 
-        # Check if login was successful
-        if "feed" in driver.current_url or "mynetwork" in driver.current_url:
+        human_delay(4, 7)
+
+        # ── Check outcome ────────────────────────────────────────────────────
+        current_url = driver.current_url
+
+        if "feed" in current_url or "mynetwork" in current_url:
             log_success("Logged in successfully!")
             return True
-        elif "checkpoint" in driver.current_url or "challenge" in driver.current_url:
-            log_warning("LinkedIn requires verification (checkpoint/challenge detected).")
+
+        elif "checkpoint" in current_url or "challenge" in current_url:
+            log_warning("LinkedIn verification challenge detected.")
+
+            # Attempt 1: Auto-solve CAPTCHA if API key provided
+            if _try_solve_captcha(driver, captcha_api_key):
+                human_delay(3, 5)
+                if "feed" in driver.current_url or "mynetwork" in driver.current_url:
+                    log_success("Logged in after CAPTCHA solve!")
+                    return True
+
+            # Attempt 2: Wait a bit and retry — sometimes the challenge resolves
+            log_info("Waiting for challenge to clear...")
+            human_delay(5, 10)
+            if "feed" in driver.current_url or "mynetwork" in driver.current_url:
+                log_success("Challenge cleared — logged in!")
+                return True
+
+            # Attempt 3: On Windows, let user solve manually
             import platform
-            if platform.system() != "Windows":
-                # Running headless on Streamlit Cloud — cannot complete the challenge
-                st.error(
-                    "⚠️ LinkedIn triggered a verification challenge (CAPTCHA / email code). "
-                    "This cannot be completed in headless mode on Streamlit Cloud.\n\n"
-                    "**How to fix:** Log in to LinkedIn manually once on your device to clear "
-                    "the checkpoint, then try again here."
-                )
-                return False
-            else:
-                # Running locally with a visible browser — user can interact
-                log_warning("Please complete the verification in the browser window, then press ENTER in the terminal.")
+            if platform.system() == "Windows":
+                log_warning("Please complete the verification in the browser window.")
                 input("Press ENTER here once you've completed the verification...")
                 return True
+            else:
+                st.error(
+                    "⚠️ LinkedIn triggered a verification challenge.\n\n"
+                    "**To fix:** Provide a 2Captcha API key in the form, or "
+                    "log in to LinkedIn manually on your device first to clear the checkpoint."
+                )
+                return False
         else:
             log_error("Login may have failed. Check your credentials.")
             return False
- 
+
     except TimeoutException:
         log_error("Timed out waiting for the login page to load.")
         return False
@@ -570,11 +640,11 @@ def create_sample_csv(filename: str):
 #  MAIN RUNNER / STREAMLIT UI
 # ─────────────────────────────────────────────────────────────────────────────
  
-def run_automation(email, password, li_at_cookie, uploaded_file, add_note, note_text, start_row, end_row):
+def run_automation(email, password, captcha_api_key, uploaded_file, add_note, note_text, start_row, end_row):
     # Set config overrides
     CONFIG["email"] = email
     CONFIG["password"] = password
-    CONFIG["li_at_cookie"] = li_at_cookie
+    CONFIG["captcha_api_key"] = captcha_api_key
     CONFIG["add_note"] = add_note
     if add_note:
         CONFIG["connection_note"] = note_text
@@ -605,7 +675,7 @@ def run_automation(email, password, li_at_cookie, uploaded_file, add_note, note_
     driver = create_driver(headless=CONFIG["headless"])
  
     try:
-        if not login(driver, CONFIG["email"], CONFIG["password"], CONFIG["li_at_cookie"]):
+        if not login(driver, CONFIG["email"], CONFIG["password"], CONFIG["captcha_api_key"]):
             st.error("Login failed. Check your console and credentials.")
             return
  
@@ -668,9 +738,9 @@ def main():
         email = st.text_input("LinkedIn Email", value=CONFIG["email"])
         password = st.text_input("LinkedIn Password", value="", type="password")
         st.markdown("---")
-        st.markdown("**(Recommended for Cloud) LinkedIn Session Cookie — Bypasses CAPTCHA entirely.**")
-        st.markdown("*How to get it: Inspect Element -> Application -> Cookies -> Copy `li_at` value.*")
-        li_at_cookie = st.text_input("li_at Cookie", value=CONFIG["li_at_cookie"], type="password")
+        st.markdown("**Auto CAPTCHA Solving** *(optional — needed only if LinkedIn triggers a challenge)*")
+        st.markdown("*Get an API key from [2captcha.com](https://2captcha.com). Costs ~$3/1000 solves.*")
+        captcha_api_key = st.text_input("2Captcha API Key", value=CONFIG["captcha_api_key"], type="password")
         
         uploaded_file = st.file_uploader("Upload Profiles CSV (Must contain a 'url' column)", type=['csv'])
         
@@ -686,12 +756,12 @@ def main():
         submitted = st.form_submit_button("Start Automation")
         
     if submitted:
-        if not li_at_cookie and (not email or not password):
-            st.error("Please provide EITHER the li_at Cookie OR both Email and Password.")
+        if not email or not password:
+            st.error("Please provide both Email and Password.")
         elif not uploaded_file:
             st.error("Please upload a CSV file with target profiles.")
         else:
-            run_automation(email, password, li_at_cookie, uploaded_file, add_note, note_text, start_row, end_row)
+            run_automation(email, password, captcha_api_key, uploaded_file, add_note, note_text, start_row, end_row)
 
 if __name__ == "__main__":
     import os
