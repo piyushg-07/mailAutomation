@@ -103,6 +103,13 @@ class SMTPSender:
                 return False, f"Sender refused (account may be blocked): {str(e)}"
             except smtplib.SMTPDataError as e:
                 return False, f"Data error (message rejected): {str(e)}"
+            except smtplib.SMTPResponseException as e:
+                # ── 4xx = temporary throttle (e.g. 421) → wait longer & retry ──
+                if 400 <= e.smtp_code < 500 and attempt < SMTP_RETRY_ATTEMPTS:
+                    self.connection = None
+                    time.sleep(min(30, 5 * (attempt + 1)))  # 5s, 10s, 15s
+                    continue
+                return False, f"SMTP error {e.smtp_code}: {str(e)}"
             except (smtplib.SMTPServerDisconnected, smtplib.SMTPConnectError,
                     ConnectionResetError, OSError) as e:
                 if attempt < SMTP_RETRY_ATTEMPTS:
@@ -251,9 +258,13 @@ class SMTPSender:
                     "timestamp": timestamp
                 })
 
-            # ── Throttle delay (skip after last email) ──
+            # ── Throttle delay with jitter (skip after last email) ──
             if i < len(recipients) - 1 and not stopped_early:
-                delay = random.uniform(delay_range[0], delay_range[1])
+                # ~10% chance of a longer "human" pause to break robotic patterns
+                if random.random() < 0.1:
+                    delay = random.uniform(delay_range[1], delay_range[1] * 3)
+                else:
+                    delay = random.uniform(delay_range[0], delay_range[1])
                 time.sleep(delay)
 
         # ── Cleanup ──
