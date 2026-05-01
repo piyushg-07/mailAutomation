@@ -106,9 +106,10 @@ class SMTPSender:
             except (smtplib.SMTPServerDisconnected, smtplib.SMTPConnectError,
                     ConnectionResetError, OSError) as e:
                 if attempt < SMTP_RETRY_ATTEMPTS:
-                    # Force reconnect on next attempt
+                    # Force reconnect with exponential backoff
                     self.connection = None
-                    time.sleep(2)
+                    backoff = min(2 ** (attempt + 1), 30)  # 2s, 4s, 8s... max 30s
+                    time.sleep(backoff)
                     continue
                 return False, f"Connection lost: {str(e)}"
             except Exception as e:
@@ -154,6 +155,8 @@ class SMTPSender:
         stopped_early = False
         stop_reason = None
         start_time = time.time()
+        sends_since_reconnect = 0
+        RECONNECT_EVERY = 25  # Fresh connection every N sends to avoid Zoho throttle
 
         for i, recipient in enumerate(recipients):
             # ── Check stop signal ──
@@ -193,6 +196,18 @@ class SMTPSender:
                     "timestamp": timestamp
                 })
                 consecutive_failures = 0  # Reset on success
+                sends_since_reconnect += 1
+
+                # ── Proactive reconnect to avoid Zoho throttle ──
+                if sends_since_reconnect >= RECONNECT_EVERY:
+                    try:
+                        if self.connection:
+                            self.connection.quit()
+                    except Exception:
+                        pass
+                    self.connection = None
+                    sends_since_reconnect = 0
+                    time.sleep(3)  # Cool-down before fresh connection
             else:
                 failed.append({
                     "email": email,
@@ -200,6 +215,15 @@ class SMTPSender:
                     "timestamp": timestamp
                 })
                 consecutive_failures += 1
+
+                # ── Clean slate: drop connection after a failure ──
+                try:
+                    if self.connection:
+                        self.connection.quit()
+                except Exception:
+                    pass
+                self.connection = None
+                time.sleep(2)  # Short cooldown after failure before next email
 
                 # ── Fail-fast check ──
                 if consecutive_failures >= CONSECUTIVE_FAIL_THRESHOLD:

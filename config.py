@@ -11,9 +11,9 @@ SMTP_USE_TLS = True
 DAILY_SEND_LIMIT = 500
 
 # ── Fail-Fast ──
-CONSECUTIVE_FAIL_THRESHOLD = 3
+CONSECUTIVE_FAIL_THRESHOLD = 10
 SMTP_TIMEOUT = 30
-SMTP_RETRY_ATTEMPTS = 1
+SMTP_RETRY_ATTEMPTS = 3
 
 # ── Email Verification — MyEmailVerifier API ──
 # Add as many API keys as you want (100 free/day each)
